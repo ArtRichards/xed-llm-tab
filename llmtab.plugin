@@ -1,0 +1,11 @@
+[Plugin]
+Loader=python3
+Module=llmtab
+IAge=3
+Name=LLM Tab
+Description=Adds a tab that sends your open tabs to an OpenAI model when you type === and shows the reply.
+Icon=gnome-mime-text-x-python
+Authors=Art Richards <art@trucktech.in>
+Copyright=Copyright © 2026 Art Richards
+Website=https://github.com/ArtRichards/xed-llm-tab
+Version=1.0.0

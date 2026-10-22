@@ -1,0 +1,6 @@
+[Plugin]
+Loader=python3
+Module=llmtabtest
+IAge=3
+Name=LLM Tab test driver
+Description=Integration test driver
