@@ -44,6 +44,28 @@ def _forget_released(tab):
     return False
 
 
+def _toolbar_box(window):
+    """The box of button groups in xed 3's own toolbar, or None in older versions.
+
+    xed 3 draws its toolbar itself instead of showing the UI manager's.
+    """
+    def find(widget):
+        if isinstance(widget, Gtk.Toolbar) and widget.get_style_context().has_class("primary-toolbar"):
+            return widget
+        if isinstance(widget, Gtk.Container):
+            for child in widget.get_children():
+                found = find(child)
+                if found is not None:
+                    return found
+        return None
+
+    toolbar = find(window)
+    if toolbar is None or toolbar.get_n_items() != 1:
+        return None
+    box = toolbar.get_nth_item(0).get_child()
+    return box if isinstance(box, Gtk.Box) else None
+
+
 def _doc_path(doc):
     location = doc.get_file().get_location()
     return location.get_path() if location is not None else None
@@ -89,6 +111,8 @@ class LLMTabWindowActivatable(GObject.Object, Xed.WindowActivatable):
         for doc in list(self._watched):
             self._unwatch(doc)
         self._remove_menu()
+        for widget in self._toolbar_widgets:
+            widget.destroy()
         if self._preferences is not None:
             self._preferences.destroy()
 
@@ -142,11 +166,39 @@ class LLMTabWindowActivatable(GObject.Object, Xed.WindowActivatable):
         self._ui_id = manager.new_merge_id()
         for name in ("OpenLLMTabAction", "SendLLMTabAction", "LLMTabPreferencesAction"):
             manager.add_ui(self._ui_id, MENU_PATH, name, name, Gtk.UIManagerItemType.MENUITEM, False)
-        manager.add_ui(self._ui_id, TOOLBAR_PATH, "LLMTabToolSeparator", None,
-                       Gtk.UIManagerItemType.SEPARATOR, False)
-        for name in ("SendLLMTabAction", "LLMTabPreferencesAction"):
-            manager.add_ui(self._ui_id, TOOLBAR_PATH, name, name, Gtk.UIManagerItemType.TOOLITEM, False)
+
+        self._toolbar_buttons = {}
+        self._toolbar_widgets = []
+        box = _toolbar_box(self.window)
+        if box is not None:
+            self._add_toolbar_buttons(box)
+        else:
+            manager.add_ui(self._ui_id, TOOLBAR_PATH, "LLMTabToolSeparator", None,
+                           Gtk.UIManagerItemType.SEPARATOR, False)
+            for name in ("SendLLMTabAction", "LLMTabPreferencesAction"):
+                manager.add_ui(self._ui_id, TOOLBAR_PATH, name, name, Gtk.UIManagerItemType.TOOLITEM, False)
         self._update_labels()
+
+    def _add_toolbar_buttons(self, box):
+        """A group at the end of xed 3's toolbar, made like xed's own buttons."""
+        separator = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
+        group = Gtk.Box(spacing=0)
+        for name in ("SendLLMTabAction", "LLMTabPreferencesAction"):
+            action = self._action_group.get_action(name)
+            button = Gtk.Button(relief=Gtk.ReliefStyle.NONE)
+            button.set_use_action_appearance(False)
+            button.set_related_action(action)  # clicking activates the action
+            button.set_image(Gtk.Image.new_from_icon_name(action.get_icon_name(), Gtk.IconSize.MENU))
+            if action.get_is_important():
+                button.set_label(action.get_short_label())
+                button.set_always_show_image(True)
+            group.pack_start(button, False, False, 0)
+            self._toolbar_buttons[name] = button
+        box.pack_start(separator, False, False, 0)
+        box.pack_start(group, False, False, 0)
+        separator.show()
+        group.show_all()
+        self._toolbar_widgets = [separator, group]
 
     def _remove_menu(self):
         manager = self.window.get_ui_manager()
@@ -164,6 +216,8 @@ class LLMTabWindowActivatable(GObject.Object, Xed.WindowActivatable):
         get("SendLLMTabAction").set_tooltip("Send the open tabs to %s, as typing === does" % name)
         get("LLMTabPreferencesAction").set_label("%s Preferences" % menu_name)
         get("LLMTabPreferencesAction").set_tooltip("%s preferences" % name)
+        for action_name, button in self._toolbar_buttons.items():
+            button.set_tooltip_text(get(action_name).get_tooltip())
         if self._preferences is not None:
             self._preferences.set_title("%s Preferences" % name)
 

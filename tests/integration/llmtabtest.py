@@ -126,11 +126,20 @@ class LLMTabTest(GObject.Object, Xed.WindowActivatable):
                 return group.get_action(name)
 
     def toolbar_button(self, name):
-        return self.window.get_ui_manager().get_widget("/ToolBar/" + name)
+        """The button for action `name` in the toolbar xed shows, if it is on screen."""
+        def find(widget):
+            if isinstance(widget, Gtk.Button) and widget.get_related_action() is not None \
+                    and widget.get_related_action().get_name() == name:
+                return widget
+            if isinstance(widget, Gtk.Container):
+                for child in widget.get_children():
+                    found = find(child)
+                    if found is not None:
+                        return found
+            return None
 
-    def click(self, tool_button):
-        # Clicking a toolbar item clicks the button inside it.
-        tool_button.get_child().clicked()
+        button = find(self.window)
+        return button if button is not None and button.get_mapped() else None
 
     def doc_named(self, name, window=None):
         for doc in (window or self.window).get_documents():
@@ -306,7 +315,11 @@ class LLMTabTest(GObject.Object, Xed.WindowActivatable):
         # P. The toolbar's Send button sends like ===, including text nobody typed
         # (a live transcript from another plugin, say); its gear opens the preferences.
         send, gear = self.toolbar_button("SendLLMTabAction"), self.toolbar_button("LLMTabPreferencesAction")
-        self.check("P: Send and gear buttons on the toolbar", send is not None and gear is not None)
+        self.check("P: Send and gear buttons on screen", send is not None and gear is not None)
+        find = self.toolbar_button("SearchFind")
+        self.check("P: in the toolbar xed shows, after its own buttons",
+                   find is not None and send.get_ancestor(Gtk.Toolbar) == find.get_ancestor(Gtk.Toolbar)
+                   and send.get_parent().get_parent().get_children()[-1] == send.get_parent())
         manager = self.window.get_ui_manager()
         self.check("P: both in the Tools menu too",
                    manager.get_widget("/MenuBar/ToolsMenu/ToolsOps_2/SendLLMTabAction") is not None
@@ -314,31 +327,32 @@ class LLMTabTest(GObject.Object, Xed.WindowActivatable):
         self.check("P: named after the tab",
                    self.menu_action("SendLLMTabAction").get_label() == "Send to Renamed"
                    and self.menu_action("LLMTabPreferencesAction").get_label() == "Renamed Preferences"
-                   and send.get_child().get_tooltip_text() == "Send the open tabs to Renamed, as typing === does"
-                   and gear.get_child().get_tooltip_text() == "Renamed preferences",
-                   (send.get_child().get_tooltip_text(), gear.get_child().get_tooltip_text()))
+                   and send.get_tooltip_text() == "Send the open tabs to Renamed, as typing === does"
+                   and gear.get_tooltip_text() == "Renamed preferences",
+                   (send.get_tooltip_text(), gear.get_tooltip_text()))
         self.check("P: Send shows its label, the gear only an icon",
-                   send.get_is_important() and send.get_label() == "Send" and not gear.get_is_important(),
-                   (send.get_label(), gear.get_is_important()))
+                   send.get_label() == "Send" and gear.get_label() is None
+                   and gear.get_image().get_icon_name()[0] == "preferences-system-symbolic",
+                   (send.get_label(), gear.get_label()))
         other.set_text("")
         count = n_requests()
         other.insert(other.get_end_iter(), "Me: written by another plugin")
         yield self.sleep(0.5)
         self.check("P: text that was not typed sends nothing by itself", n_requests() == count, n_requests())
         reply = next_reply()
-        self.click(send)
+        send.clicked()
         yield ("Send button queried", lambda: self.out_text() == reply, 10)
         self.check("P: the request includes that text",
                    "--- other.txt ---\nMe: written by another plugin" in last_request()["input"],
                    last_request()["input"])
         self.check("P: focus stayed where it was", self.window.get_active_tab() == self.out_tab())
-        self.click(gear)
+        gear.clicked()
         dialog = self.plugin()._preferences
         self.check("P: the gear opens the preferences", dialog is not None and dialog.get_visible()
                    and dialog.get_title() == "Renamed Preferences", dialog and dialog.get_title())
         self.check("P: with the settings in it", dialog is not None and any(
             isinstance(w, sys.modules["llmtab"].SettingsGrid) for w in dialog.get_content_area().get_children()))
-        self.click(gear)
+        gear.clicked()
         self.check("P: a second click brings back the same dialog", self.plugin()._preferences is dialog)
         dialog.response(Gtk.ResponseType.CLOSE)
         self.check("P: Close closes it", self.plugin()._preferences is None)
@@ -434,6 +448,6 @@ class LLMTabTest(GObject.Object, Xed.WindowActivatable):
         self.check("Q: this window has no output tab", self.out_tab() is None)
         active = self.window.get_active_tab()
         reply = next_reply()
-        self.click(self.toolbar_button("SendLLMTabAction"))
+        self.toolbar_button("SendLLMTabAction").clicked()
         yield ("Send reopened the tab and queried", lambda: self.out_text() == reply, 10)
         self.check("Q: focus stayed where it was", self.window.get_active_tab() == active)

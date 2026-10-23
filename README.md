@@ -48,7 +48,7 @@ In both modes, typing a new `===` or pressing Send cancels a reply that's still 
 Two buttons sit at the end of xed's toolbar. They're also in the **Tools** menu, in case the toolbar is hidden.
 
 - **Send** sends your open tabs, as typing `===` does. If the output tab is closed, Send reopens it in the background, without switching to it, and sends.
-- **The gear** opens the plugin's preferences.
+- **Preferences** (a gear or tools icon, depending on your icon theme) opens the plugin's preferences.
 
 Their tooltips and menu items are named after the tab, like **Tools → Open ‹tab name›**.
 
@@ -62,7 +62,7 @@ Their tooltips and menu items are named after the tab, like **Tools → Open ‹
 
 ## Settings
 
-Open them with the gear button on the toolbar, or from **Edit → Preferences → Plugins → LLM Tab → Preferences**. They're stored in `~/.config/xed/llm-tab.json` and take effect immediately.
+Open them with the Preferences button on the toolbar, or from **Edit → Preferences → Plugins → LLM Tab → Preferences**. They're stored in `~/.config/xed/llm-tab.json` and take effect immediately.
 
 | Setting | Default | Notes |
 |---|---|---|
