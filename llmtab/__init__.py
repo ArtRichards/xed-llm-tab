@@ -14,6 +14,8 @@
 #                line, and errors are shown in the tab.
 #
 #  Closing the tab saves its last reply; Tools > Open <tab name> brings it back.
+#  The toolbar's Send button sends without typing ===, and its gear button
+#  opens the preferences.
 
 import os
 import threading
@@ -26,6 +28,7 @@ from gi.repository import GLib, GObject, Gio, Gtk, GtkSource, PeasGtk, Xed
 from . import core
 
 MENU_PATH = "/MenuBar/ToolsMenu/ToolsOps_2"
+TOOLBAR_PATH = "/ToolBar"
 
 # Every active window's plugin instance, so settings changes apply at once.
 _instances = set()
@@ -65,6 +68,7 @@ class LLMTabWindowActivatable(GObject.Object, Xed.WindowActivatable):
         self._last_reply = None   # the latest complete reply
         self._saved_text = None   # what was last saved to the save folder
         self._backing_path = os.path.join(core.cache_dir(), "output-%d-%d.md" % (os.getpid(), id(self)))
+        self._preferences = None  # the open preferences dialog
 
         for doc in self.window.get_documents():
             self._watch(doc)
@@ -85,6 +89,8 @@ class LLMTabWindowActivatable(GObject.Object, Xed.WindowActivatable):
         for doc in list(self._watched):
             self._unwatch(doc)
         self._remove_menu()
+        if self._preferences is not None:
+            self._preferences.destroy()
 
         tab = self._out_tab
         if tab is not None:
@@ -98,7 +104,7 @@ class LLMTabWindowActivatable(GObject.Object, Xed.WindowActivatable):
     def apply_settings(self, settings):
         mode_changed = settings["display_mode"] != self._settings["display_mode"]
         self._settings = dict(settings)
-        self._update_menu_label()
+        self._update_labels()
         if self._out_tab is None:
             return
         if mode_changed:
@@ -115,24 +121,32 @@ class LLMTabWindowActivatable(GObject.Object, Xed.WindowActivatable):
     def _tab_name(self):
         return self._settings["tab_name"].strip() or core.DEFAULTS["tab_name"]
 
-    # Menu
+    # Menu and toolbar
 
     def _insert_menu(self):
         manager = self.window.get_ui_manager()
 
         self._action_group = Gtk.ActionGroup(name="XedLLMTabPluginActions")
-        self._action_group.add_actions([("OpenLLMTabAction", None, "", None, None,
-                                         self.on_open_llm_tab_activate)])
+        self._action_group.add_actions([
+            ("OpenLLMTabAction", None, "", None, None, self.on_open_llm_tab_activate),
+            ("SendLLMTabAction", None, "", None, None, self.on_send_activate),
+            ("LLMTabPreferencesAction", None, "", None, None, self.on_preferences_activate),
+        ])
+        send = self._action_group.get_action("SendLLMTabAction")
+        send.set_icon_name("mail-send-symbolic")
+        send.set_short_label("Send")
+        send.set_is_important(True)  # shows "Send" beside the icon on the toolbar
+        self._action_group.get_action("LLMTabPreferencesAction").set_icon_name("preferences-system-symbolic")
         manager.insert_action_group(self._action_group)
 
         self._ui_id = manager.new_merge_id()
-        manager.add_ui(self._ui_id,
-                       MENU_PATH,
-                       "OpenLLMTabAction",
-                       "OpenLLMTabAction",
-                       Gtk.UIManagerItemType.MENUITEM,
-                       False)
-        self._update_menu_label()
+        for name in ("OpenLLMTabAction", "SendLLMTabAction", "LLMTabPreferencesAction"):
+            manager.add_ui(self._ui_id, MENU_PATH, name, name, Gtk.UIManagerItemType.MENUITEM, False)
+        manager.add_ui(self._ui_id, TOOLBAR_PATH, "LLMTabToolSeparator", None,
+                       Gtk.UIManagerItemType.SEPARATOR, False)
+        for name in ("SendLLMTabAction", "LLMTabPreferencesAction"):
+            manager.add_ui(self._ui_id, TOOLBAR_PATH, name, name, Gtk.UIManagerItemType.TOOLITEM, False)
+        self._update_labels()
 
     def _remove_menu(self):
         manager = self.window.get_ui_manager()
@@ -140,25 +154,57 @@ class LLMTabWindowActivatable(GObject.Object, Xed.WindowActivatable):
         manager.remove_action_group(self._action_group)
         manager.ensure_update()
 
-    def _update_menu_label(self):
-        # Named after the tab, so the menu does not give the tab away.
-        action = self._action_group.get_action("OpenLLMTabAction")
-        action.set_label("Open %s" % self._tab_name().replace("_", "__"))
+    def _update_labels(self):
+        # Named after the tab, so the menu and toolbar do not give the tab away.
+        name = self._tab_name()
+        menu_name = name.replace("_", "__")
+        get = self._action_group.get_action
+        get("OpenLLMTabAction").set_label("Open %s" % menu_name)
+        get("SendLLMTabAction").set_label("Send to %s" % menu_name)
+        get("SendLLMTabAction").set_tooltip("Send the open tabs to %s, as typing === does" % name)
+        get("LLMTabPreferencesAction").set_label("%s Preferences" % menu_name)
+        get("LLMTabPreferencesAction").set_tooltip("%s preferences" % name)
+        if self._preferences is not None:
+            self._preferences.set_title("%s Preferences" % name)
 
     def on_open_llm_tab_activate(self, action, user_data=None):
         if self._out_tab is not None:
             self.window.set_active_tab(self._out_tab)
         else:
-            self._open_output_tab(jump_to=True)
+            self._open_output_tab(jump_to=True, query=self._settings["query_on_open"])
+
+    def on_send_activate(self, action, user_data=None):
+        # Like typing ===, except that a closed output tab is reopened, in the background.
+        if self._out_tab is not None:
+            self._run_query()
+        else:
+            self._open_output_tab(jump_to=False, query=True)
+
+    def on_preferences_activate(self, action, user_data=None):
+        if self._preferences is not None:
+            self._preferences.present()
+            return
+        dialog = Gtk.Dialog(title="%s Preferences" % self._tab_name(), transient_for=self.window,
+                            destroy_with_parent=True)
+        dialog.add_button("_Close", Gtk.ResponseType.CLOSE)
+        dialog.get_content_area().add(SettingsGrid(core.load_settings()))
+        dialog.connect("response", lambda dialog, response: dialog.destroy())
+        dialog.connect("destroy", self.on_preferences_destroyed)
+        dialog.show_all()
+        self._preferences = dialog
+
+    def on_preferences_destroyed(self, dialog):
+        if self._preferences is dialog:
+            self._preferences = None
 
     # Output tab
 
     def on_startup_idle(self):
         if self in _instances and self._out_tab is None:
-            self._open_output_tab(jump_to=False)
+            self._open_output_tab(jump_to=False, query=self._settings["query_on_open"])
         return False
 
-    def _open_output_tab(self, jump_to):
+    def _open_output_tab(self, jump_to, query):
         # create=True opens the tab the way `xed new-file.txt` does: a named
         # document whose file does not exist yet. xed neither counts it as
         # unsaved nor loads the next opened file into it, and nothing is
@@ -171,7 +217,7 @@ class LLMTabWindowActivatable(GObject.Object, Xed.WindowActivatable):
             self._creating_tab = False
         self._adopt(tab, None)
 
-        if self._settings["query_on_open"]:
+        if query:
             self._query_when_loaded(tab)
         return tab
 

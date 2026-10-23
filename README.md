@@ -2,12 +2,12 @@
 
 LLM Tab is a plugin for [xed](https://github.com/linuxmint/xed), the Linux Mint text editor. It adds an output tab to each window.
 
-Type `===` in any other tab and the plugin sends a request to an OpenAI model. The reply appears in the output tab. The request contains:
+Type `===` in any other tab, or press **Send** on the toolbar, and the plugin sends a request to an OpenAI model. The reply appears in the output tab. The request contains:
 
 - the system prompt
 - your initial prompt
 - an optional style guide
-- the text of every other open tab, in tab order
+- the text of every other open tab, in tab order, including tabs that other plugins write, such as a live transcript from [Transcript Tab](https://github.com/ArtRichards/xed-transcript-tab)
 
 > **Privacy:** every open tab's full text is sent to the API whenever a request runs. Close tabs you don't want sent. Requests use `store: false`.
 
@@ -41,19 +41,28 @@ To update, run `git pull` in that folder and restart xed. To uninstall, disable 
 
 **Streaming**: the reply streams in as it's generated, after an "Asking…" line, with Markdown highlighting. Errors are shown in the tab. The tab is read-only.
 
-In both modes, typing a new `===` cancels a reply that's still in progress.
+In both modes, typing a new `===` or pressing Send cancels a reply that's still in progress.
+
+## Toolbar buttons
+
+Two buttons sit at the end of xed's toolbar. They're also in the **Tools** menu, in case the toolbar is hidden.
+
+- **Send** sends your open tabs, as typing `===` does. If the output tab is closed, Send reopens it in the background, without switching to it, and sends.
+- **The gear** opens the plugin's preferences.
+
+Their tooltips and menu items are named after the tab, like **Tools → Open ‹tab name›**.
 
 ## Behavior in both modes
 
 - **What triggers a request.** A new run of three or more `=` that you type or paste. Extending `===` to `====` doesn't send again. Opening a file doesn't trigger a request, and neither does the model's own output.
 - **Replies never mark the tab modified.** The tab never shows a `*` for a reply, and closing it never asks to save.
 - **Closing the tab saves its last finished reply.** It goes to `<save folder>/<tab-name>-<timestamp>.md`.
-- **A closed tab stays closed.** While it's closed, `===` does nothing. **Tools → Open ‹tab name›** reopens it.
+- **A closed tab stays closed.** While it's closed, `===` does nothing. **Tools → Open ‹tab name›** or the Send button reopens it.
 - **Several windows.** Each window has its own output tab. If you move the output tab to a window that doesn't have one, it takes over that role there.
 
 ## Settings
 
-Open them from **Edit → Preferences → Plugins → LLM Tab → Preferences**. They're stored in `~/.config/xed/llm-tab.json` and take effect immediately.
+Open them with the gear button on the toolbar, or from **Edit → Preferences → Plugins → LLM Tab → Preferences**. They're stored in `~/.config/xed/llm-tab.json` and take effect immediately.
 
 | Setting | Default | Notes |
 |---|---|---|

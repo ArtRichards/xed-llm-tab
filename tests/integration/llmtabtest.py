@@ -120,10 +120,17 @@ class LLMTabTest(GObject.Object, Xed.WindowActivatable):
         location = self.out_tab().get_document().get_file().get_location()
         return location.get_path() if location else None
 
-    def menu_action(self):
+    def menu_action(self, name="OpenLLMTabAction"):
         for group in self.window.get_ui_manager().get_action_groups():
-            if group.get_action("OpenLLMTabAction"):
-                return group.get_action("OpenLLMTabAction")
+            if group.get_action(name):
+                return group.get_action(name)
+
+    def toolbar_button(self, name):
+        return self.window.get_ui_manager().get_widget("/ToolBar/" + name)
+
+    def click(self, tool_button):
+        # Clicking a toolbar item clicks the button inside it.
+        tool_button.get_child().clicked()
 
     def doc_named(self, name, window=None):
         for doc in (window or self.window).get_documents():
@@ -295,6 +302,47 @@ class LLMTabTest(GObject.Object, Xed.WindowActivatable):
                    "--- notes.txt ---" in body and "--- other.txt ---" in body, body)
         self.check("J: style guide sent once even though it is open in a tab",
                    body.count(STYLE_GUIDE) == 1 and "--- style.md ---" not in body, body)
+
+        # P. The toolbar's Send button sends like ===, including text nobody typed
+        # (a live transcript from another plugin, say); its gear opens the preferences.
+        send, gear = self.toolbar_button("SendLLMTabAction"), self.toolbar_button("LLMTabPreferencesAction")
+        self.check("P: Send and gear buttons on the toolbar", send is not None and gear is not None)
+        manager = self.window.get_ui_manager()
+        self.check("P: both in the Tools menu too",
+                   manager.get_widget("/MenuBar/ToolsMenu/ToolsOps_2/SendLLMTabAction") is not None
+                   and manager.get_widget("/MenuBar/ToolsMenu/ToolsOps_2/LLMTabPreferencesAction") is not None)
+        self.check("P: named after the tab",
+                   self.menu_action("SendLLMTabAction").get_label() == "Send to Renamed"
+                   and self.menu_action("LLMTabPreferencesAction").get_label() == "Renamed Preferences"
+                   and send.get_child().get_tooltip_text() == "Send the open tabs to Renamed, as typing === does"
+                   and gear.get_child().get_tooltip_text() == "Renamed preferences",
+                   (send.get_child().get_tooltip_text(), gear.get_child().get_tooltip_text()))
+        self.check("P: Send shows its label, the gear only an icon",
+                   send.get_is_important() and send.get_label() == "Send" and not gear.get_is_important(),
+                   (send.get_label(), gear.get_is_important()))
+        other.set_text("")
+        count = n_requests()
+        other.insert(other.get_end_iter(), "Me: written by another plugin")
+        yield self.sleep(0.5)
+        self.check("P: text that was not typed sends nothing by itself", n_requests() == count, n_requests())
+        reply = next_reply()
+        self.click(send)
+        yield ("Send button queried", lambda: self.out_text() == reply, 10)
+        self.check("P: the request includes that text",
+                   "--- other.txt ---\nMe: written by another plugin" in last_request()["input"],
+                   last_request()["input"])
+        self.check("P: focus stayed where it was", self.window.get_active_tab() == self.out_tab())
+        self.click(gear)
+        dialog = self.plugin()._preferences
+        self.check("P: the gear opens the preferences", dialog is not None and dialog.get_visible()
+                   and dialog.get_title() == "Renamed Preferences", dialog and dialog.get_title())
+        self.check("P: with the settings in it", dialog is not None and any(
+            isinstance(w, sys.modules["llmtab"].SettingsGrid) for w in dialog.get_content_area().get_children()))
+        self.click(gear)
+        self.check("P: a second click brings back the same dialog", self.plugin()._preferences is dialog)
+        dialog.response(Gtk.ResponseType.CLOSE)
+        self.check("P: Close closes it", self.plugin()._preferences is None)
+        other.set_text("")
         good = self.out_text()
 
         # M. Streaming: switching to incognito mid-reply cancels it and restores the last reply.
@@ -381,3 +429,11 @@ class LLMTabTest(GObject.Object, Xed.WindowActivatable):
         self.check("O: closing it in its new window saves the new reply", len(new) == 1, new)
         self.check("O: nothing on disk for the output tabs",
                    not os.path.exists(os.path.join(SAVE_DIR, "Renamed (2)")), saved_files())
+
+        # Q. With the output tab closed, Send reopens it in the background and sends.
+        self.check("Q: this window has no output tab", self.out_tab() is None)
+        active = self.window.get_active_tab()
+        reply = next_reply()
+        self.click(self.toolbar_button("SendLLMTabAction"))
+        yield ("Send reopened the tab and queried", lambda: self.out_text() == reply, 10)
+        self.check("Q: focus stayed where it was", self.window.get_active_tab() == active)
